@@ -1,1 +1,318 @@
-<h1>sis </h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Video Cube with Particles</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #000;
+            color: #fff;
+        }
+
+        #scene-container {
+            width: 100%;
+            height: 80vh;
+        }
+
+        #menu {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 2;
+        }
+
+        #menu-button {
+            background-color: #000;
+            border: 2px solid #fff;
+            color: #fff;
+            border-radius: 5px;
+            padding: 10px 15px;
+            cursor: pointer;
+            font-size: 18px;
+        }
+
+        #menu-button:hover {
+            background-color: #333;
+        }
+
+        #controls {
+            display: none;
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 10px;
+            border: 2px solid #fff;
+        }
+
+        #controls label {
+            display: block;
+            margin: 5px 0;
+            color: #fff;
+        }
+
+        #controls input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            background: #fff;
+            border-radius: 5px;
+            outline: none;
+            margin: 5px 0;
+        }
+
+        #controls input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #000;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        #controls input[type="color"] {
+            border: 2px solid #fff;
+            border-radius: 5px;
+            padding: 5px;
+            background-color: #000;
+            color: #fff;
+        }
+
+        #controls button {
+            background-color: #000;
+            border: 2px solid #fff;
+            color: #fff;
+            border-radius: 5px;
+            padding: 10px;
+            cursor: pointer;
+            margin: 5px 0;
+        }
+
+        #controls button:hover {
+            background-color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div id="menu">
+        <button id="menu-button">☰</button>
+    </div>
+    <div id="controls">
+        <input type="file" id="videoInput" accept="video/*">
+        <button id="playButton">Play</button>
+        <button id="pauseButton">Pause</button>
+        <button id="stopButton">Stop</button>
+        <label for="volumeControl">Volume:</label>
+        <input type="range" id="volumeControl" min="0" max="1" step="0.01" value="1">
+        <label for="shapeSize">Shape Size:</label>
+        <input type="range" id="shapeSize" min="0.1" max="2" step="0.1" value="1">
+        <label for="particleSize">Particle Size:</label>
+        <input type="range" id="particleSize" min="0.01" max="1" step="0.01" value="0.1">
+        <label for="backgroundColor">Background Color:</label>
+        <input type="color" id="backgroundColor" value="#000000">
+        <label for="particleColor">Particle Color:</label>
+        <input type="color" id="particleColor" value="#ffffff">
+    </div>
+    <div id="scene-container"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, shape, wireframe, video, videoTexture, clock, particleSystem, particleGeometry, particleMaterial;
+        let audioContext, analyser, bufferLength, dataArray;
+        let previousParticlePositions = [];
+        const particleMovementFactor = 0.01; // Factor para suavizar el movimiento de partículas
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('scene-container').appendChild(renderer.domElement);
+
+            // Crear cubo con textura de video
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            videoTexture = new THREE.VideoTexture(document.createElement('video')); // Crear una textura inicial
+            const material = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide }); // Aplicar la textura
+            shape = new THREE.Mesh(geometry, material);
+
+            // Crear wireframe encima del cubo
+            const wireframeGeometry = new THREE.EdgesGeometry(geometry);
+            const wireframeMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 9999 }); // Línea tres veces más gruesa
+            wireframe = new THREE.LineSegments(wireframeGeometry, wireframeMaterial);
+            shape.add(wireframe);
+
+            scene.add(shape);
+
+            // Crear partículas
+            const numParticles = 200;
+            particleGeometry = new THREE.BufferGeometry();
+            const vertices = [];
+            for (let i = 0; i < numParticles; i++) {
+                const x = Math.random() * 10 - 5;
+                const y = Math.random() * 10 - 5;
+                const z = Math.random() * 10 - 5;
+                vertices.push(x, y, z);
+                previousParticlePositions.push(new THREE.Vector3(x, y, z)); // Guardar posiciones anteriores
+            }
+            particleGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            particleMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.1 }); // Tamaño inicial de partículas
+            particleSystem = new THREE.Points(particleGeometry, particleMaterial);
+            scene.add(particleSystem);
+
+            clock = new THREE.Clock();
+
+            // Event listeners para los controles de video
+            document.getElementById('playButton').addEventListener('click', () => {
+                if (video) {
+                    video.play();
+                }
+            });
+
+            document.getElementById('pauseButton').addEventListener('click', () => {
+                if (video) {
+                    video.pause();
+                }
+            });
+
+            document.getElementById('stopButton').addEventListener('click', () => {
+                if (video) {
+                    video.pause();
+                    video.currentTime = 0;
+                }
+            });
+
+            document.getElementById('volumeControl').addEventListener('input', (event) => {
+                if (video) {
+                    video.volume = event.target.value;
+                }
+            });
+
+            // Event listeners para los controles de tamaño y color
+            document.getElementById('shapeSize').addEventListener('input', (event) => {
+                const size = parseFloat(event.target.value);
+                shape.scale.set(size, size, size); // Cambiar el tamaño del cubo
+            });
+
+            document.getElementById('particleSize').addEventListener('input', (event) => {
+                const size = parseFloat(event.target.value);
+                particleMaterial.size = size;
+            });
+
+            document.getElementById('backgroundColor').addEventListener('input', (event) => {
+                const color = event.target.value;
+                renderer.setClearColor(color); // Cambiar color de fondo
+                document.body.style.backgroundColor = color; // Cambiar color de fondo del body
+                document.getElementById('controls').style.backgroundColor = color; // Cambiar color de fondo de los controles
+            });
+
+            document.getElementById('particleColor').addEventListener('input', (event) => {
+                const color = event.target.value;
+                particleMaterial.color.set(color); // Cambiar color de partículas
+            });
+
+            document.getElementById('menu-button').addEventListener('click', () => {
+                const controls = document.getElementById('controls');
+                if (controls.style.display === 'none' || controls.style.display === '') {
+                    controls.style.display = 'block';
+                } else {
+                    controls.style.display = 'none';
+                }
+            });
+
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (video && videoTexture) {
+                // Actualizar la textura del video
+                videoTexture.needsUpdate = true;
+
+                if (analyser) {
+                    analyser.getByteFrequencyData(dataArray);
+                    const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
+                    const scale = 1 + (average / 128); // Ajustar escala basada en el volumen promedio
+                    shape.scale.set(scale * 1.5, scale * 1.5, scale * 1.5); // Hacer el cubo el doble de su tamaño original
+
+                    // Cambiar el color del wireframe basado en el ritmo de la música
+                    const colorValue = 1 - Math.min(Math.max(average / 256, 0), 1); // De negro a verde
+                    const color = new THREE.Color(`rgb(0, ${Math.round(colorValue * 255)}, 0)`); // Verde a negro
+                    wireframe.material.color = color;
+
+                    // Animar partículas suavemente según el ritmo de la música
+                    const numParticles = particleGeometry.attributes.position.count;
+                    const positions = particleGeometry.attributes.position.array;
+                    for (let i = 0; i < numParticles; i++) {
+                        const vertex = new THREE.Vector3().fromBufferAttribute(particleGeometry.attributes.position, i);
+                        const previousPosition = previousParticlePositions[i];
+                        const factor = average / 256; // Reducir el factor para hacer el movimiento más lento
+                        vertex.x = previousPosition.x + (vertex.x - previousPosition.x) * (1 - particleMovementFactor) + (Math.random() - 0.5) * factor;
+                        vertex.y = previousPosition.y + (vertex.y - previousPosition.y) * (1 - particleMovementFactor) + (Math.random() - 0.5) * factor;
+                        vertex.z = previousPosition.z + (vertex.z - previousPosition.z) * (1 - particleMovementFactor) + (Math.random() - 0.5) * factor;
+                        positions[i * 3] = vertex.x;
+                        positions[i * 3 + 1] = vertex.y;
+                        positions[i * 3 + 2] = vertex.z;
+                        previousParticlePositions[i] = vertex; // Actualizar la posición anterior
+                    }
+                    particleGeometry.attributes.position.needsUpdate = true;
+                }
+
+                // Rotar el cubo
+                shape.rotation.x += 0.01;
+                shape.rotation.y += 0.005;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        document.getElementById('videoInput').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                video = document.createElement('video');
+                video.src = URL.createObjectURL(file);
+                video.load();
+                video.play();
+                videoTexture = new THREE.VideoTexture(video);
+                shape.material.map = videoTexture;
+                shape.material.needsUpdate = true;
+
+                // Inicializar Web Audio API para el análisis de audio
+                if (audioContext) {
+                    audioContext.close();
+                }
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createMediaElementSource(video);
+                analyser = audioContext.createAnalyser();
+                source.connect(analyser);
+                analyser.connect(audioContext.destination);
+
+                bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+
+                // Configurar el volumen inicial
+                document.getElementById('volumeControl').value = video.volume;
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        init();
+    </script>
+</body>
+</html>
